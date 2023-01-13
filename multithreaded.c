@@ -10,8 +10,6 @@
 #include<assert.h>
 // Multithreaded stuff
 #include<pthread.h>
-#include<semaphore.h>
-
 // ************** FUNCTION POINTERS **************
 
 // Logic on Queue [CS 140 2223A - Lecture 16]
@@ -38,8 +36,6 @@ void Queue_Free(queue_t *);
 // ************** CONSTANTS **************
 const char slash[] = "/";
 pthread_t tid[8];
-sem_t sem_work;
-int done = 0;
 int N = 1;
 // ************** THREADING SHENANIGANS **************
 int counter = 0;
@@ -61,7 +57,6 @@ int main(int argc, char *argv[]) {
     N = atoi(argv[1]);
     queue_t *QUEUE = malloc(sizeof(queue_t));
     Queue_Init(QUEUE);
-    sem_init(&sem_work, 0, 0);
     
     char *path = realpath(argv[2], NULL);
     
@@ -76,7 +71,6 @@ int main(int argc, char *argv[]) {
     for(int x = 0; x < N; x++) {
         pthread_join(tid[x], NULL);
     }
-    sem_destroy(&sem_work);
     free(path);
     Queue_Free(QUEUE);
     return 0;
@@ -85,26 +79,18 @@ int main(int argc, char *argv[]) {
 void *work(void *values) {
     struct work_args *args = values;
     while(1) {
-        sem_wait(&sem_work);
-        if(done) {
+        pthread_mutex_lock(&m_counter);
+        if(counter == 0) {
+            pthread_mutex_unlock(&m_counter);
             break;
         }
+        pthread_mutex_unlock(&m_counter);
         char file[PATH_MAX];
-        Queue_Dequeue(args->q, file);
-        accessDir(file, args->word, args->q, args->worker_id);
-        pthread_mutex_lock(&args->q->head_lock);
-        pthread_mutex_lock(&args->q->tail_lock);
-        if(args->q->head == args->q-> tail) {
-            pthread_mutex_lock(&m_counter);
-            if(counter == 0) {
-                done = 1;
-                for(int x = 0; x < N; x++) // flush standby threads
-                    sem_post(&sem_work);
-            }
-            pthread_mutex_unlock(&m_counter);
+        
+        if(Queue_Dequeue(args->q, file) == -1) {
+            continue;
         }
-        pthread_mutex_unlock(&args->q->head_lock);
-        pthread_mutex_unlock(&args->q->tail_lock);
+        accessDir(file, args->word, args->q, args->worker_id);
     }
 }
 // ****************************************************************************************************
@@ -129,9 +115,7 @@ void accessDir(char path[], char word[], queue_t *q, int worker_id) {
     struct dirent *child; //can be a directory or just a file
     char filename[PATH_MAX];
     DIR *dir = opendir(path);
-    pthread_mutex_lock(&m_counter);
-    counter++;
-    pthread_mutex_unlock(&m_counter);
+    
     printf("[%d] DIR %s\n", worker_id, path);
 
     while ((child = readdir(dir)) != NULL) {
@@ -179,7 +163,9 @@ void Queue_Enqueue(queue_t *q, char file[]) {
     q->tail->next = tmp;
     q->tail = tmp;
     pthread_mutex_unlock(&q->tail_lock);
-    sem_post(&sem_work);
+    pthread_mutex_lock(&m_counter);
+    counter++;
+    pthread_mutex_unlock(&m_counter);
 }
 
 // CS 140 2223A - Lecture 16
