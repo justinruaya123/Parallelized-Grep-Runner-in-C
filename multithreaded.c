@@ -25,7 +25,7 @@ typedef struct __queue_t {
     pthread_mutex_t head_lock, tail_lock;
 } queue_t;
 // Auxiliary functions
-void accessDir(char [], char [], queue_t *, int);
+int accessDir(char [], char [], queue_t *, int);
 int isFile(char []);
 int getGrepMatch(char [], char []);
 void *work(void *);
@@ -85,26 +85,24 @@ int main(int argc, char *argv[]) {
 void *work(void *values) {
     struct work_args *args = values;
     while(1) {
-        sem_wait(&sem_work);
         if(done) {
             break;
         }
         char file[PATH_MAX];
-        Queue_Dequeue(args->q, file);
-        accessDir(file, args->word, args->q, args->worker_id);
-        pthread_mutex_lock(&args->q->head_lock);
-        pthread_mutex_lock(&args->q->tail_lock);
-        if(args->q->head == args->q-> tail) {
-            pthread_mutex_lock(&m_counter);
-            if(counter == 0) {
-                done = 1;
-                for(int x = 0; x < N; x++) // flush standby threads
-                    sem_post(&sem_work);
-            }
-            pthread_mutex_unlock(&m_counter);
+        
+        if(Queue_Dequeue(args->q, file) == -1) {
+            sem_wait(&sem_work); //standby
+            continue;
         }
-        pthread_mutex_unlock(&args->q->head_lock);
-        pthread_mutex_unlock(&args->q->tail_lock);
+        accessDir(file, args->word, args->q, args->worker_id)
+        pthread_mutex_lock(&m_counter);
+        if(counter == 0) {
+            done = 1;
+            for(int x = 0; x < N; x++) // flush standby threads
+                sem_post(&sem_work);
+        }
+        pthread_mutex_unlock(&m_counter);
+        
     }
 }
 // ****************************************************************************************************
@@ -125,13 +123,12 @@ int getGrepMatch(char file_path[], char word[]) {
 }
 
 
-void accessDir(char path[], char word[], queue_t *q, int worker_id) {
+int accessDir(char path[], char word[], queue_t *q, int worker_id) {
     struct dirent *child; //can be a directory or just a file
     char filename[PATH_MAX];
+    int has_queue = 0;
     DIR *dir = opendir(path);
-    pthread_mutex_lock(&m_counter);
-    counter++;
-    pthread_mutex_unlock(&m_counter);
+    
     printf("[%d] DIR %s\n", worker_id, path);
 
     while ((child = readdir(dir)) != NULL) {
@@ -148,12 +145,14 @@ void accessDir(char path[], char word[], queue_t *q, int worker_id) {
         } else {
             printf("[%d] ENQUEUE %s\n", worker_id, filename);
             Queue_Enqueue(q, filename);
+            has_queue = 1;
         }
     }
     pthread_mutex_lock(&m_counter);
     counter--;
     pthread_mutex_unlock(&m_counter);
     closedir(dir);
+    return has_queue;
 }
  
 // ****************************************************************************************************
@@ -179,6 +178,9 @@ void Queue_Enqueue(queue_t *q, char file[]) {
     q->tail->next = tmp;
     q->tail = tmp;
     pthread_mutex_unlock(&q->tail_lock);
+    pthread_mutex_lock(&m_counter);
+    counter++;
+    pthread_mutex_unlock(&m_counter);
     sem_post(&sem_work);
 }
 
