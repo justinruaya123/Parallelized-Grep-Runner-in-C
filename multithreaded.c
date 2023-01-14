@@ -20,7 +20,7 @@ typedef struct __node_t {
 typedef struct __queue_t {
     node_t *head;
     node_t *tail;
-    pthread_mutex_t head_lock, tail_lock;
+    pthread_mutex_t queue_lock;
 } queue_t;
 // Auxiliary functions
 void accessDir(char [], char [], queue_t *, int);
@@ -149,8 +149,7 @@ void Queue_Init(queue_t *q) {
     node_t *tmp = malloc(sizeof(node_t));
     tmp->next = NULL;
     q->head = q->tail = tmp;
-    pthread_mutex_init(&q->head_lock, NULL);
-    pthread_mutex_init(&q->tail_lock, NULL);
+    pthread_mutex_init(&q->queue_lock, NULL);
 }
 
 // CS 140 2223A - Lecture 16
@@ -159,27 +158,27 @@ void Queue_Enqueue(queue_t *q, char file[]) {
     assert(tmp!= NULL);
     strcpy(tmp->file, file);
     tmp->next = NULL;
-    pthread_mutex_lock(&q->tail_lock);
+    pthread_mutex_lock(&q->queue_lock); // One lock instead of tail lock
     q->tail->next = tmp;
     q->tail = tmp;
-    pthread_mutex_unlock(&q->tail_lock);
-    pthread_mutex_lock(&m_counter);
+    pthread_mutex_unlock(&q->queue_lock);  // One lock instead of tail lock
+    pthread_mutex_lock(&m_counter); // Counter incrementation
     counter++;
     pthread_mutex_unlock(&m_counter);
 }
 
 // CS 140 2223A - Lecture 16
 int Queue_Dequeue(queue_t *q, char file[]) {
-    pthread_mutex_lock(&q->head_lock);
+    pthread_mutex_lock(&q->queue_lock);  // One lock instead of head lock
     node_t *tmp = q->head;
     node_t *new_head = tmp->next;
     if(new_head == NULL) {
-        pthread_mutex_unlock(&q->head_lock);
+        pthread_mutex_unlock(&q->queue_lock);  // One lock instead of head lock
         return -1;
     }
     strcpy(file, new_head->file);
     q->head = new_head;
-    pthread_mutex_unlock(&q->head_lock);
+    pthread_mutex_unlock(&q->queue_lock);  // One lock instead of head lock
     free(tmp);
     return 0;
 }
